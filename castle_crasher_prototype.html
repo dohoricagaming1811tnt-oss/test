@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Castle Crasher - Mini Prototype</title>
+  <style>
+    html,body{height:100%;margin:0;background:#222;color:#eee;font-family:Inter,system-ui,Arial}
+    #game{display:block;margin:12px auto;background:#7ec0ee;box-shadow:0 10px 40px rgba(0,0,0,.6);}
+    .ui{width:960px;margin:8px auto;text-align:left}
+    .hint{font-size:13px;opacity:.9}
+    .bar{height:12px;background:#444;border-radius:6px;overflow:hidden;margin-top:6px}
+    .bar > i{display:block;height:100%;background:linear-gradient(90deg,#ff6b6b,#ffb86b)}
+  </style>
+</head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div class="ui">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <strong>Castle Crasher - Mini Prototype</strong>
+        <div class="hint">Controls: A/D or ←/→ move, W or ↑ jump, J attack, K heavy, Hold S to block</div>
+      </div>
+      <div style="text-align:right">
+        <div>Score: <span id="score">0</span></div>
+      </div>
+    </div>
+    <div style="margin-top:8px">
+      <div>Player Health</div>
+      <div class="bar"><i id="playerBar" style="width:100%"></i></div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // Simple 2D beat-em-up prototype. No assets: shapes only.
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // Input
+  const keys = {};
+  addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; e.preventDefault(); });
+  addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  // Utility
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function rectsOverlap(a,b){return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y}
+
+  // Game world
+  const gravity = 0.8;
+  const groundY = H - 80;
+
+  class Actor{
+    constructor(x,y,w,h, color){
+      this.x=x;this.y=y;this.w=w;this.h=h;this.vx=0;this.vy=0;this.color=color;this.flip=false;
+      this.onGround=false;this.health=100;this.maxHealth=100;this.invuln=0;
+    }
+    applyPhysics(){
+      this.vy += gravity;
+      this.x += this.vx; this.y += this.vy;
+      if(this.y + this.h > groundY){ this.y = groundY - this.h; this.vy = 0; this.onGround = true; } else this.onGround=false;
+    }
+    draw(){
+      ctx.save();
+      ctx.fillStyle = this.color;
+      ctx.fillRect(this.x,this.y,this.w,this.h);
+      ctx.restore();
+    }
+  }
+
+  class Player extends Actor{
+    constructor(x,y){
+      super(x,y,48,64,'#264653');
+      this.speed = 4.2; this.jumpPower = -14; this.attackCooldown=0; this.heavyCooldown=0; this.blocking=false;
+      this.facing = 1; this.score=0; this.combo=0; this.comboTimer=0;
+    }
+    update(dt){
+      // movement
+      let left = keys['a']||keys['arrowleft'];
+      let right = keys['d']||keys['arrowright'];
+      this.blocking = keys['s']||keys['arrowdown'];
+      if(left && !right){ this.vx = -this.speed; this.facing = -1; }
+      else if(right && !left){ this.vx = this.speed; this.facing = 1; }
+      else this.vx = 0;
+
+      // jump
+      if((keys['w']||keys['arrowup']) && this.onGround){ this.vy = this.jumpPower; this.onGround=false }
+
+      // attack
+      if((keys['j'] || keys[' ']) && this.attackCooldown<=0){ this.attackCooldown = 20; this.lightAttack(); }
+      if((keys['k']) && this.heavyCooldown<=0){ this.heavyCooldown = 40; this.heavyAttack(); }
+
+      if(this.attackCooldown>0) this.attackCooldown--;
+      if(this.heavyCooldown>0) this.heavyCooldown--;
+
+      if(this.comboTimer>0) this.comboTimer -= dt; else this.combo=0;
+
+      if(this.invuln>0) this.invuln -= dt;
+
+      this.applyPhysics();
+      // clamp within world
+      this.x = clamp(this.x, 20, W-20-this.w);
+    }
+    lightAttack(){
+      // create a short-lived hitbox
+      const range = {x: this.facing===1 ? this.x+this.w : this.x-28, y: this.y+10, w:28, h:40};
+      attacks.push({owner:'player',box:range,damage:12,stun:8,life:6});
+      this.combo = Math.min(5,this.combo+1); this.comboTimer = 60; // frames
+    }
+    heavyAttack(){
+      const range = {x: this.facing===1 ? this.x+this.w : this.x-48, y: this.y, w:48, h:this.h};
+      attacks.push({owner:'player',box:range,damage:24,stun:18,life:10});
+      this.combo = 0; this.comboTimer=0;
+    }
+    takeDamage(dmg){ if(this.invuln>0) return; if(this.blocking){ dmg = Math.floor(dmg*0.4); }
+      this.health -= dmg; this.invuln = 30; if(this.health<0) this.health=0; }
+    draw(){
+      // body
+      ctx.fillStyle = this.blocking ? '#2a9d8f' : this.color;
+      ctx.fillRect(this.x,this.y,this.w,this.h);
+      // simple face
+      ctx.fillStyle='#fff'; ctx.fillRect(this.x+8,this.y+12,10,8);
+      ctx.fillRect(this.x+this.w-18,this.y+12,10,8);
+      // weapon hint
+      ctx.fillStyle='#b5651d'; if(this.attackCooldown>0) ctx.fillRect(this.facing===1?this.x+this.w:this.x-8,this.y+30,8,6);
+    }
+  }
+
+  class Enemy extends Actor{
+    constructor(x,y){ super(x,y,44,56,'#8a2be2'); this.aiTimer=0; this.state='idle'; this.speed=1.6 }
+    update(dt){
+      // simple ai: approach player, attack if close
+      const dx = player.x - this.x;
+      if(Math.abs(dx) > 70){ this.vx = Math.sign(dx)*this.speed; }
+      else { this.vx = 0; if(this.aiTimer<=0){ this.aiTimer = 60 + Math.random()*40; attacks.push({owner:'enemy',box:{x: this.x + (dx>0?this.w:-28), y:this.y+6, w:28, h:44},damage:10,stun:6,life:8}); } }
+      this.applyPhysics();
+      if(this.health<=0) { this.dead = true; }
+      if(this.invuln>0) this.invuln-=dt;
+    }
+    draw(){
+      ctx.fillStyle = this.color; ctx.fillRect(this.x,this.y,this.w,this.h);
+      // simple eyes
+      ctx.fillStyle='#fff'; ctx.fillRect(this.x+8,this.y+10,8,6); ctx.fillRect(this.x+this.w-18,this.y+10,8,6);
+    }
+  }
+
+  // Entities
+  const player = new Player(120, groundY-64);
+  const enemies = [];
+  const attacks = []; // {owner, box:{x,y,w,h}, damage, life}
+
+  // spawn helper
+  function spawnEnemy(){ const x = 600 + Math.random()*300; enemies.push(new Enemy(x, groundY - 56)); }
+  for(let i=0;i<3;i++) spawnEnemy();
+
+  // Game loop
+  let last = performance.now();
+  function loop(now){
+    const dt = Math.min(60, now-last)/16.6667; last = now; // dt in frames
+    update(dt); render(); requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    player.update(dt);
+    enemies.forEach(e=>e.update(dt));
+
+    // handle attacks collision and lifetime
+    for(let i=attacks.length-1;i>=0;i--){
+      const a = attacks[i]; a.life--; if(a.life<=0){ attacks.splice(i,1); continue; }
+      if(a.owner==='player'){
+        // hit enemies
+        for(let j=enemies.length-1;j>=0;j--){ const en = enemies[j]; if(en.dead) continue; if(rectsOverlap(a.box,en)){
+          en.health -= a.damage; en.invuln = 12; player.score += Math.floor(a.damage*0.5);
+          // knockback
+          en.vx += (en.x < player.x ? -2 : 2);
+          // remove attack after hit
+          attacks.splice(i,1); break;
+        }}
+      } else if(a.owner==='enemy'){
+        if(rectsOverlap(a.box,player)){
+          player.takeDamage(a.damage);
+          attacks.splice(i,1);
+        }
+      }
+    }
+
+    // remove dead enemies and respawn
+    for(let i=enemies.length-1;i>=0;i--){ if(enemies[i].dead){ player.score += 50; enemies.splice(i,1); } }
+    while(enemies.length < 3) spawnEnemy();
+
+    // update UI
+    document.getElementById('score').innerText = player.score;
+    const pBar = document.getElementById('playerBar'); pBar.style.width = (player.health/player.maxHealth*100)+'%';
+  }
+
+  function render(){
+    // background
+    ctx.clearRect(0,0,W,H);
+    // sky
+    ctx.fillStyle = '#7ec0ee'; ctx.fillRect(0,0,W,H);
+    // distant castle silhouette
+    ctx.fillStyle = 'rgba(30,30,30,0.12)'; ctx.fillRect(80, groundY-220, 160, 180);
+    ctx.fillRect(260, groundY-260, 120, 220);
+    // ground
+    ctx.fillStyle='#6b4226'; ctx.fillRect(0, groundY, W, H-groundY);
+    // decorative floor
+    for(let x=0;x<W;x+=40){ ctx.fillStyle='rgba(0,0,0,0.06)'; ctx.fillRect(x+((Date.now()/100)%40), groundY+20, 24, 6); }
+
+    // attacks debug (optional)
+    attacks.forEach(a=>{
+      ctx.save(); ctx.globalAlpha = 0.8; ctx.fillStyle = a.owner==='player' ? 'rgba(255,200,80,0.9)' : 'rgba(200,80,80,0.9)';
+      ctx.fillRect(a.box.x,a.box.y,a.box.w,a.box.h); ctx.restore();
+    });
+
+    // draw actors
+    player.draw();
+    enemies.forEach(e=>e.draw());
+
+    // HUD
+    ctx.fillStyle = '#fff'; ctx.font = '14px monospace'; ctx.fillText('COMBO: '+player.combo, 14, 22);
+  }
+
+  // start loop
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
